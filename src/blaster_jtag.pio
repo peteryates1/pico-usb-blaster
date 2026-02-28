@@ -1,0 +1,45 @@
+.program blaster_jtag
+.side_set 1
+
+; 2-instruction JTAG shift: 4 SM-clock cycles per bit, 50% duty cycle.
+; Autopull/autopush at 8 bits, right-shift (LSB-first).
+; Stalls on empty TX FIFO with TCK low (safe idle).
+; At divider 2 (120 MHz sys): SM clock 60 MHz -> 15 MHz TCK.
+
+.wrap_target
+    out pins, 1     side 0 [1]  ; TDI output, TCK low  (2 cycles)
+    in pins, 1      side 1 [1]  ; Read TDO,   TCK high (2 cycles)
+.wrap
+
+% c-sdk {
+#include "hardware/clocks.h"
+#include "hardware/gpio.h"
+
+static inline void blaster_jtag_program_init(PIO pio, uint sm, uint offset,
+                                             uint tdi_pin, uint tdo_pin, uint tck_pin)
+{
+    // Configure TCK as side-set, TDI as OUT, TDO as IN
+    pio_gpio_init(pio, tck_pin);
+    pio_gpio_init(pio, tdi_pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, tck_pin, 1, true);   // TCK output
+    pio_sm_set_consecutive_pindirs(pio, sm, tdi_pin, 1, true);   // TDI output
+
+    pio_sm_config c = blaster_jtag_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&c, tck_pin);
+    sm_config_set_out_pins(&c, tdi_pin, 1);
+    sm_config_set_in_pins(&c, tdo_pin);
+
+    // LSB-first, autopull/autopush at 8 bits
+    sm_config_set_out_shift(&c, true, true, 8);   // right-shift, autopull
+    sm_config_set_in_shift(&c, true, true, 8);    // right-shift, autopush
+
+    // Divider 2 -> 60 MHz SM clock -> 15 MHz TCK (4 cycles/bit)
+    sm_config_set_clkdiv(&c, 2.0f);
+
+    // Bypass input synchronizer on TDO for minimum latency
+    hw_set_bits(&pio->input_sync_bypass, 1u << tdo_pin);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

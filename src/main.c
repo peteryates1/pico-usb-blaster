@@ -132,6 +132,17 @@ void tud_reset_cb(void)
 // Vendor control transfers
 //--------------------------------------------------------------------+
 
+// FTDI control request codes
+#define FTDI_SIO_GET_MODEM_STATUS  0x05
+#define FTDI_SIO_GET_LATENCY_TIMER 0x0A
+#define FTDI_SIO_READ_EEPROM       0x90
+
+// FTDI modem/line status (matches bulk IN header bytes)
+#define FTDI_MODEM_STATUS 0x31  // CTS + DSR + reserved bit 0
+#define FTDI_LINE_STATUS  0x60  // THRE + TEMT
+
+static uint8_t ftdi_latency_timer = 2;  // ms
+
 static bool handle_vendor_in_request(uint8_t rhport, tusb_control_request_t const *request)
 {
     uint8_t bRequest = request->bRequest;
@@ -139,59 +150,90 @@ static bool handle_vendor_in_request(uint8_t rhport, tusb_control_request_t cons
     uint16_t wLength = request->wLength;
 
     uint8_t response[2] = {0};
+    uint16_t resp_length;
 
-    if (bRequest == 0x90)
+    switch (bRequest)
+    {
+    case FTDI_SIO_GET_MODEM_STATUS:
+        response[0] = FTDI_MODEM_STATUS;
+        response[1] = FTDI_LINE_STATUS;
+        resp_length = (wLength < 2) ? wLength : 2;
+        break;
+
+    case FTDI_SIO_GET_LATENCY_TIMER:
+        response[0] = ftdi_latency_timer;
+        resp_length = 1;
+        break;
+
+    case FTDI_SIO_READ_EEPROM:
     {
         uint16_t address = wIndex * 2;
-
         if ((address + 1) < FT245_EEPROM_LENGTH)
         {
             response[0] = FT245_EEPROM[address];
             response[1] = FT245_EEPROM[address + 1];
         }
-
-        TU_LOG1("Vendor IN eeprom request wIndex: %d\r\n", wIndex);
-    }
-    else
-    {
-        response[0] = 0x36;
-        response[1] = 0x83;
-
-        TU_LOG1("Vendor IN unknown request bRequest: %d\r\n", bRequest);
+        resp_length = (wLength < 2) ? wLength : 2;
+        break;
     }
 
-    uint16_t resp_length = (wLength < 2) ? wLength : 2;
+    default:
+        response[0] = FTDI_MODEM_STATUS;
+        response[1] = FTDI_LINE_STATUS;
+        resp_length = (wLength < 2) ? wLength : 2;
+        TU_LOG1("Vendor IN unknown bRequest: %d\r\n", bRequest);
+        break;
+    }
 
     tud_control_xfer(rhport, request, response, resp_length);
-
     return true;
 }
 
+// FTDI OUT request codes
+#define FTDI_SIO_RESET             0x00
+#define FTDI_SIO_MODEM_CTRL        0x01
+#define FTDI_SIO_SET_FLOW_CTRL     0x02
+#define FTDI_SIO_SET_BAUD_RATE     0x03
+#define FTDI_SIO_SET_DATA          0x04
+#define FTDI_SIO_SET_LATENCY_TIMER 0x09
+
 static bool handle_vendor_out_request(uint8_t rhport, tusb_control_request_t const *request)
 {
+    switch (request->bRequest)
+    {
+    case FTDI_SIO_RESET:
+        blaster_reset();
+        break;
+    case FTDI_SIO_SET_LATENCY_TIMER:
+        ftdi_latency_timer = request->wValue & 0xFF;
+        break;
+    case FTDI_SIO_MODEM_CTRL:
+    case FTDI_SIO_SET_FLOW_CTRL:
+    case FTDI_SIO_SET_BAUD_RATE:
+    case FTDI_SIO_SET_DATA:
+        break;  // ACK silently
+    default:
+        TU_LOG1("Vendor OUT unknown bRequest: %d\r\n", request->bRequest);
+        break;
+    }
+
     if (request->wLength > 0)
         tud_control_xfer(rhport, request, NULL, 0);
     else
         tud_control_status(rhport, request);
 
-    TU_LOG1("Vendor OUT request\r\n");
-
     return true;
 }
 
-bool tud_control_request_cb(uint8_t rhport, tusb_control_request_t const *request)
+bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *request)
 {
-    if (request->bmRequestType_bit.type == TUSB_REQ_TYPE_VENDOR)
-    {
-        if (request->bmRequestType_bit.direction == TUSB_DIR_IN)
-            // Vendor IN request (Device to Host)
-            return handle_vendor_in_request(rhport, request);
-        
-        // Vendor OUT request (Host to Device)
-        return handle_vendor_out_request(rhport, request);
-    }
+    if (stage != CONTROL_STAGE_SETUP)
+        return true;
 
-    return false;
+    if (request->bmRequestType_bit.direction == TUSB_DIR_IN)
+        return handle_vendor_in_request(rhport, request);
+
+    return handle_vendor_out_request(rhport, request);
 }
 
 //--------------------------------------------------------------------+
@@ -210,8 +252,8 @@ static void vendor_task(void)
         return;
     }
 
-    //each 64 bytes received can theoretically produce 64 payload bytes sent
-    if (tud_vendor_available() && tx_ready <= 64)
+    // Process all available data, not just one packet
+    while (tud_vendor_available() && tx_ready <= 64)
     {
         uint8_t buf[64];
         int count = tud_vendor_read(buf, sizeof(buf));
@@ -221,11 +263,12 @@ static void vendor_task(void)
 
     uint32_t now = board_millis();
 
-    if ((tx_ready + 2) >= 64 || (now - prev_tx_ms) >= 10)
+    if (tx_ready > 0 || (now - prev_tx_ms) >= ftdi_latency_timer)
     {
         int txCount = tx_ready > 62 ? 62 : tx_ready;
 
-        if (tud_vendor_write_available() < (txCount + 2))
+        // Only write if TX FIFO is empty (previous packet was sent)
+        if (tud_vendor_write_available() < CFG_TUD_VENDOR_TX_BUFSIZE)
             return;
 
         tud_vendor_write(tx_buf, txCount + 2);

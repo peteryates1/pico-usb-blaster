@@ -98,7 +98,7 @@ extern "C" {
 
 // Vendor FIFO size of TX and RX
 // If zero: vendor endpoints will not be buffered
-#define CFG_TUD_VENDOR_RX_BUFSIZE 64
+#define CFG_TUD_VENDOR_RX_BUFSIZE 1024
 #define CFG_TUD_VENDOR_TX_BUFSIZE 64
 
 #ifdef __cplusplus

@@ -22,6 +22,7 @@ add_executable(pico_usb_blaster
 )
 
 pico_generate_pio_header(pico_usb_blaster ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+pico_generate_pio_header(pico_usb_blaster ${CMAKE_CURRENT_LIST_DIR}/blaster_jtag.pio)
 
 # Make sure TinyUSB can find tusb_config.h
 target_include_directories(pico_usb_blaster PUBLIC

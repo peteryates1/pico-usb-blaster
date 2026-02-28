@@ -2,6 +2,8 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include "hardware/structs/sio.h"
+#include "hardware/pio.h"
+#include "blaster_jtag.pio.h"
 
 // Pin assignments — match pico-fpga / pico-dirtyJtag wiring
 #define TCK_DCLK_PIN        2
@@ -40,6 +42,12 @@ static bool output_enabled = false;
 static int shift_bytes_left = 0;
 static bool shift_read_set;
 
+// PIO JTAG shift
+static PIO jtag_pio;
+static uint jtag_sm;
+static uint jtag_offset;
+static bool jtag_pio_ok = false;
+
 // rx/tx byte to signal relations in bitbang mode
 //
 // rx 
@@ -71,6 +79,23 @@ static void blaster_init(void)
     gpio_init(TDI_ASDI_PIN);
     gpio_init(TDO_CONF_DONE_PIN);
     gpio_init(DATAOUT_nSTATUS_PIN);
+
+    // Init PIO JTAG shift engine
+    jtag_pio = pio0;
+    if (pio_can_add_program(jtag_pio, &blaster_jtag_program)) {
+        jtag_offset = pio_add_program(jtag_pio, &blaster_jtag_program);
+        int sm = pio_claim_unused_sm(jtag_pio, false);
+        if (sm >= 0) {
+            jtag_sm = (uint)sm;
+            blaster_jtag_program_init(jtag_pio, jtag_sm, jtag_offset,
+                                      TDI_ASDI_PIN, TDO_CONF_DONE_PIN, TCK_DCLK_PIN);
+            // SM is running but stalls immediately on empty TX FIFO (TCK low)
+            // Pins still under SIO control until we switch them
+            gpio_set_function(TCK_DCLK_PIN, GPIO_FUNC_SIO);
+            gpio_set_function(TDI_ASDI_PIN, GPIO_FUNC_SIO);
+            jtag_pio_ok = true;
+        }
+    }
 
     initialized = true;
 }
@@ -125,7 +150,7 @@ static inline uint8_t bitbang(uint8_t data)
     return ret;
 }
 
-static inline uint8_t shift(uint8_t data)
+static inline uint8_t shift_bitbang(uint8_t data)
 {
     uint8_t ret = 0;
 
@@ -152,6 +177,33 @@ static inline uint8_t shift(uint8_t data)
     return ret;
 }
 
+static inline void shift_enter_pio(void)
+{
+    pio_gpio_init(jtag_pio, TCK_DCLK_PIN);
+    pio_gpio_init(jtag_pio, TDI_ASDI_PIN);
+}
+
+static inline void shift_exit_pio(void)
+{
+    // Drain RX FIFO in case of leftover data
+    while (!pio_sm_is_rx_fifo_empty(jtag_pio, jtag_sm))
+        (void)jtag_pio->rxf[jtag_sm];
+
+    gpio_set_function(TCK_DCLK_PIN, GPIO_FUNC_SIO);
+    gpio_set_function(TDI_ASDI_PIN, GPIO_FUNC_SIO);
+    gpio_set_dir(TCK_DCLK_PIN, true);
+    gpio_set_dir(TDI_ASDI_PIN, true);
+}
+
+static inline uint8_t shift_pio(uint8_t data)
+{
+    *(io_rw_8 *)&jtag_pio->txf[jtag_sm] = data;
+    while (pio_sm_is_rx_fifo_empty(jtag_pio, jtag_sm))
+        tight_loop_contents();
+    // Right-shift IN places 8 bits at [31:24]; read full word and extract top byte
+    return (uint8_t)(jtag_pio->rxf[jtag_sm] >> 24);
+}
+
 void blaster_reset(void)
 {
     if (!initialized)
@@ -173,7 +225,7 @@ int blaster_process(uint8_t rxBuf[], int rxCount, uint8_t txBuf[])
 
         if (shift_bytes_left > 0) // shift mode active
         {
-            uint8_t input = shift(b);
+            uint8_t input = jtag_pio_ok ? shift_pio(b) : shift_bitbang(b);
 
             if (shift_read_set)
             {
@@ -182,12 +234,18 @@ int blaster_process(uint8_t rxBuf[], int rxCount, uint8_t txBuf[])
             }
 
             --shift_bytes_left;
+
+            if (shift_bytes_left == 0 && jtag_pio_ok)
+                shift_exit_pio();
         }
         else if (SHIFT_MODE_FLAG(b)) // shift mode activated
         {
             shift_read_set = READ_FLAG(b);
             shift_bytes_left = PAYLOAD(b);
             gpio_put(TCK_DCLK_PIN, false);
+
+            if (jtag_pio_ok)
+                shift_enter_pio();
         }
         else // bitbang mode
         {
