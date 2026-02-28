@@ -2,38 +2,20 @@
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 
-// change these according to your setup
+// Pin assignments — match pico-fpga / pico-dirtyJtag wiring
+#define TCK_DCLK_PIN        2
+#define TMS_nCONFIG_PIN     3
+#define nCE_PIN             6   // unused for JTAG, keep out of the way
+#define nCS_PIN             7   // unused for JTAG, keep out of the way
+#define TDI_ASDI_PIN        4
+#define TDO_CONF_DONE_PIN   5
+#define DATAOUT_nSTATUS_PIN 8   // unused for JTAG, keep out of the way
 
-// if onboard LED / single external LED
 #define ACTIVE_LED_PIN PICO_DEFAULT_LED_PIN
 
-// for boards with WS2812 rgb
-//#define ACTIVE_LED_WS2812_PIN   16
-//#define ACTIVE_LED_WS2812_COLOR_OFF 0x00080000 //standby color, dim red
-//#define ACTIVE_LED_WS2812_COLOR_ON 0x08000000 //active color, dim green
-
-// if level shifter is used
-//#define LEVEL_SHIFTER_OE_PIN    15
-
-// pins are mapped sequentially starting from TCK_DCLK_PIN
-//
-// #  I/O  pin name
-// 11  O  TCK_DCLK_PIN 
-// 12  O  TMS_nCONFIG_PIN
-// 13  O  nCE_PIN
-// 14  O  nCS_PIN
-// 15  O  TDI_ASDI_PIN
-// 16  I  TDO_CONF_DONE_PIN
-// 17  I  DATAOUT_nSTATUS_PIN
-
-#define TCK_DCLK_PIN 11
-
-// ^^^^^^^^^^^^^
-
-#define nCS_PIN             (TCK_DCLK_PIN + 3)
-#define TDI_ASDI_PIN        (TCK_DCLK_PIN + 4)
-#define TDO_CONF_DONE_PIN   (TCK_DCLK_PIN + 5)
-#define DATAOUT_nSTATUS_PIN (TCK_DCLK_PIN + 6)
+// Output pin mask (TCK, TMS, nCE, nCS, TDI)
+#define OUT_PIN_MASK ((1u << TCK_DCLK_PIN) | (1u << TMS_nCONFIG_PIN) | \
+                      (1u << nCE_PIN) | (1u << nCS_PIN) | (1u << TDI_ASDI_PIN))
 
 #ifdef ACTIVE_LED_WS2812_PIN
     #include "ws2812.h"
@@ -74,18 +56,15 @@ static void blaster_init(void)
     gpio_init(ACTIVE_LED_PIN);
     gpio_set_dir(ACTIVE_LED_PIN, true);
 #endif
-#ifdef ACTIVE_LED_WS2812_PIN
-    ws2812_init(ACTIVE_LED_WS2812_PIN);
-    ws2812_set(ACTIVE_LED_WS2812_COLOR_OFF);
-#endif
 
-    gpio_init_mask(0b1111111U << TCK_DCLK_PIN); //init 7 pins as input starting from TCK
-    
-#ifdef LEVEL_SHIFTER_OE_PIN
-    gpio_init(LEVEL_SHIFTER_OE_PIN);
-    gpio_set_dir(LEVEL_SHIFTER_OE_PIN, true);
-    gpio_set_dir_masked(0b0011111U << TCK_DCLK_PIN, 0xFFFFFFFF); //always output if shifter is used
-#endif
+    // Init all 7 pins as GPIO inputs
+    gpio_init(TCK_DCLK_PIN);
+    gpio_init(TMS_nCONFIG_PIN);
+    gpio_init(nCE_PIN);
+    gpio_init(nCS_PIN);
+    gpio_init(TDI_ASDI_PIN);
+    gpio_init(TDO_CONF_DONE_PIN);
+    gpio_init(DATAOUT_nSTATUS_PIN);
 
     initialized = true;
 }
@@ -113,47 +92,44 @@ static inline void output_enable(bool enable)
 #ifdef ACTIVE_LED_PIN
     gpio_put(ACTIVE_LED_PIN, enable);
 #endif
-#ifdef ACTIVE_LED_WS2812_PIN
-    ws2812_set(enable ? ACTIVE_LED_WS2812_COLOR_ON : ACTIVE_LED_WS2812_COLOR_OFF);
-#endif
 
-#ifdef LEVEL_SHIFTER_OE_PIN
-    gpio_put(LEVEL_SHIFTER_OE_PIN, enable);
+    // Set 5 output pins (TCK, TMS, nCE, nCS, TDI) as output or high-Z
+    uint32_t dir = enable ? 0xFFFFFFFF : 0;
+    gpio_set_dir_masked(OUT_PIN_MASK, dir);
+}
 
-    //~400ns
-    delay_5_cycles();
-    delay_5_cycles();
-    delay_5_cycles();
-    delay_5_cycles();
-    delay_5_cycles();
-    delay_5_cycles();
-    delay_5_cycles();
-    delay_5_cycles();
-#else
-    gpio_set_dir_masked(0b0011111U << TCK_DCLK_PIN, enable ? 0xFFFFFFFF : 0); //lower 5 of 7 pins are output/high-z (input), remaining 2 are input only
-#endif
+// Map protocol bitfield to GPIO pin positions atomically
+static inline uint32_t protocol_to_gpio(uint8_t data)
+{
+    uint32_t gpio_val = 0;
+    if (data & 0x01) gpio_val |= (1u << TCK_DCLK_PIN);        // bit 0 -> TCK
+    if (data & 0x02) gpio_val |= (1u << TMS_nCONFIG_PIN);     // bit 1 -> TMS
+    if (data & 0x04) gpio_val |= (1u << nCE_PIN);             // bit 2 -> nCE
+    if (data & 0x08) gpio_val |= (1u << nCS_PIN);             // bit 3 -> nCS
+    if (data & 0x10) gpio_val |= (1u << TDI_ASDI_PIN);        // bit 4 -> TDI
+    return gpio_val;
 }
 
 static inline uint8_t bitbang(uint8_t data)
 {
     uint8_t ret = (!!gpio_get(TDO_CONF_DONE_PIN)) | ((!!gpio_get(DATAOUT_nSTATUS_PIN)) << 1);
     delay_5_cycles();
-    gpio_put_masked(0b0011111U << TCK_DCLK_PIN, ((uint32_t)data) << TCK_DCLK_PIN);
+    // Set all output pins atomically to avoid glitches
+    gpio_put_masked(OUT_PIN_MASK, protocol_to_gpio(data));
     return ret;
 }
 
 static inline uint8_t shift(uint8_t data)
 {
     uint8_t ret = 0;
-    bool nCS = gpio_get_out_level(nCS_PIN);
 
     for (int i = 0; i < 8; ++i)
     {
         gpio_put(TDI_ASDI_PIN, data & 0b1);
 
         ret >>= 1;
-        
-        if (gpio_get(nCS ? TDO_CONF_DONE_PIN : DATAOUT_nSTATUS_PIN))
+
+        if (gpio_get(TDO_CONF_DONE_PIN))
             ret |= 0b10000000;
 
         gpio_put(TCK_DCLK_PIN, true);
@@ -174,7 +150,8 @@ void blaster_reset(void)
 
     shift_bytes_left = 0;
     output_enable(false);
-    gpio_put_masked(0b11111U << TCK_DCLK_PIN, 0);
+    // Default nCS=1 so shift mode reads TDO (JTAG) not DATAOUT (AS)
+    gpio_put_masked(OUT_PIN_MASK, 1u << nCS_PIN);
 }
 
 int blaster_process(uint8_t rxBuf[], int rxCount, uint8_t txBuf[])
