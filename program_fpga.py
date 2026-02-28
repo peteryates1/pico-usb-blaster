@@ -17,20 +17,27 @@ IR_CHECK_STATUS = 0x004
 IR_STARTUP = 0x003
 IR_BYPASS = 0x3FF
 
-# Open USB-Blaster
-for d in usb.core.find(idVendor=0x09fb, idProduct=0x6001, find_all=True):
+# Open USB-Blaster (try each device, skip stale entries)
+d = None
+for dev in usb.core.find(idVendor=0x09fb, idProduct=0x6001, find_all=True):
     try:
-        d.detach_kernel_driver(0)
+        dev.detach_kernel_driver(0)
     except:
         pass
     try:
-        d.set_configuration()
-        usb.util.claim_interface(d, 0)
-        P(f"Opened USB-Blaster (dev {d.address})")
-        break
-    except:
-        continue
-else:
+        dev.set_configuration()
+        usb.util.claim_interface(dev, 0)
+        # Test if device is actually responsive
+        dev.read(0x81, 64, timeout=50)
+    except usb.core.USBError as e:
+        if e.errno == 19:  # No such device (stale entry)
+            continue
+        # Timeout is OK — means device is there but no data yet
+    d = dev
+    P(f"Opened USB-Blaster (dev {d.address})")
+    break
+
+if d is None:
     P("No USB-Blaster found")
     sys.exit(1)
 
@@ -139,14 +146,14 @@ while pos < total:
     cmd_stream.extend(rbf_jtag[pos:pos+n])
     pos += n
 
-# Send in large batches (4KB USB writes = ~62 shift commands)
-BATCH = 4096
+# Send in large batches — larger batch = fewer syscalls, better USB scheduling
+BATCH = 32768  # 32KB — best sustained throughput for USB Full Speed
 sent = 0
 total_cmds = len(cmd_stream)
 
 while sent < total_cmds:
     n = min(BATCH, total_cmds - sent)
-    d.write(0x02, bytes(cmd_stream[sent:sent+n]), timeout=2000)
+    d.write(0x02, bytes(cmd_stream[sent:sent+n]), timeout=5000)
     sent += n
     # Progress every ~64KB of command data
     if (sent // BATCH) % 16 == 0:

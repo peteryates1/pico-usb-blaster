@@ -211,7 +211,7 @@ static void vendor_task(void)
     }
 
     //each 64 bytes received can theoretically produce 64 payload bytes sent
-    if (tud_vendor_available() && tx_ready <= 64) 
+    if (tud_vendor_available() && tx_ready <= 64)
     {
         uint8_t buf[64];
         int count = tud_vendor_read(buf, sizeof(buf));
@@ -225,8 +225,7 @@ static void vendor_task(void)
     {
         int txCount = tx_ready > 62 ? 62 : tx_ready;
 
-        //other option is to disable fifo completely i.e. don't send anything until it is completely empty
-        if (tud_vendor_write_available() < (txCount + 2)) 
+        if (tud_vendor_write_available() < (txCount + 2))
             return;
 
         tud_vendor_write(tx_buf, txCount + 2);

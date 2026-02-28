@@ -1,6 +1,7 @@
 #include "blaster.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
+#include "hardware/structs/sio.h"
 
 // Pin assignments — match pico-fpga / pico-dirtyJtag wiring
 #define TCK_DCLK_PIN        2
@@ -12,6 +13,11 @@
 #define DATAOUT_nSTATUS_PIN 8   // unused for JTAG, keep out of the way
 
 #define ACTIVE_LED_PIN PICO_DEFAULT_LED_PIN
+
+// Pin masks for direct SIO register access
+#define TCK_MASK  (1u << TCK_DCLK_PIN)
+#define TDI_MASK  (1u << TDI_ASDI_PIN)
+#define TDO_MASK  (1u << TDO_CONF_DONE_PIN)
 
 // Output pin mask (TCK, TMS, nCE, nCS, TDI)
 #define OUT_PIN_MASK ((1u << TCK_DCLK_PIN) | (1u << TMS_nCONFIG_PIN) | \
@@ -125,17 +131,20 @@ static inline uint8_t shift(uint8_t data)
 
     for (int i = 0; i < 8; ++i)
     {
-        gpio_put(TDI_ASDI_PIN, data & 0b1);
+        // Set TDI via direct SIO — branchless (clr then conditionally set)
+        sio_hw->gpio_clr = TDI_MASK;
+        sio_hw->gpio_set = ((uint32_t)(data & 1)) << TDI_ASDI_PIN;
 
         ret >>= 1;
 
-        if (gpio_get(TDO_CONF_DONE_PIN))
-            ret |= 0b10000000;
+        // Read TDO via direct SIO
+        if (sio_hw->gpio_in & TDO_MASK)
+            ret |= 0x80;
 
-        gpio_put(TCK_DCLK_PIN, true);
-        delay_5_cycles();
-        delay_5_cycles();
-        gpio_put(TCK_DCLK_PIN, false);
+        // TCK high — minimal delay (just the register write latency)
+        sio_hw->gpio_set = TCK_MASK;
+        // TCK low
+        sio_hw->gpio_clr = TCK_MASK;
 
         data >>= 1;
     }
