@@ -5,13 +5,20 @@
 #include "hardware/pio.h"
 #include "blaster_jtag.pio.h"
 
-// Pin assignments — match pico-fpga / pico-dirtyJtag wiring
-#define TCK_DCLK_PIN        2
-#define TMS_nCONFIG_PIN     3
+// Pin assignments — A-E115FB harness: GP16=TDI, GP17=TDO, GP18=TCK, GP19=TMS.
+// This matches pico-dirtyJtag's BOARD_PICO profile, so the same Pico can be
+// swapped between the two firmwares with no rewiring. Verified on hardware:
+// jtagconfig reads IDCODE 020F70DD (EP4CE115) through this mapping.
+//
+// The older GP2-5 mapping (commit caa836b) was for a different harness; the PIO
+// sets its sideset/out/in pins independently, so any mapping works — they do
+// not have to be adjacent.
+#define TCK_DCLK_PIN        18
+#define TMS_nCONFIG_PIN     19
 #define nCE_PIN             6   // unused for JTAG, keep out of the way
 #define nCS_PIN             7   // unused for JTAG, keep out of the way
-#define TDI_ASDI_PIN        4
-#define TDO_CONF_DONE_PIN   5
+#define TDI_ASDI_PIN        16
+#define TDO_CONF_DONE_PIN   17
 #define DATAOUT_nSTATUS_PIN 8   // unused for JTAG, keep out of the way
 
 #define ACTIVE_LED_PIN PICO_DEFAULT_LED_PIN
