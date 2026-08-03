@@ -4,7 +4,12 @@
 ; 2-instruction JTAG shift: 4 SM-clock cycles per bit, 50% duty cycle.
 ; Autopull/autopush at 8 bits, right-shift (LSB-first).
 ; Stalls on empty TX FIFO with TCK low (safe idle).
-; At divider 2 (120 MHz sys): SM clock 60 MHz -> 15 MHz TCK.
+; TCK = sys_clk / (BLASTER_JTAG_CLKDIV * 4). At 120 MHz sys:
+;   clkdiv 2 -> 15 MHz TCK, clkdiv 8 -> 3.75 MHz, clkdiv 16 -> 1.875 MHz.
+; 15 MHz proved too fast over flying leads to an EP4CE115 JTAG header: IDCODE
+; reads fine (a few hundred bits) but a 28-Mbit configuration stream ends with
+; CONF_DONE low, for both our bitstream and the vendor's own reference. Backed
+; off to 3.75 MHz, which still shifts 3.5 MB in about 8 s.
 
 .wrap_target
     out pins, 1     side 0 [1]  ; TDI output, TCK low  (2 cycles)
@@ -33,8 +38,11 @@ static inline void blaster_jtag_program_init(PIO pio, uint sm, uint offset,
     sm_config_set_out_shift(&c, true, true, 8);   // right-shift, autopull
     sm_config_set_in_shift(&c, true, true, 8);    // right-shift, autopush
 
-    // Divider 2 -> 60 MHz SM clock -> 15 MHz TCK (4 cycles/bit)
-    sm_config_set_clkdiv(&c, 2.0f);
+    // See the header comment: TCK = sys_clk / (CLKDIV * 4).
+#ifndef BLASTER_JTAG_CLKDIV
+#define BLASTER_JTAG_CLKDIV 64.0f   /* 0.47 MHz TCK — deliberately slow, see below */
+#endif
+    sm_config_set_clkdiv(&c, BLASTER_JTAG_CLKDIV);
 
     // Bypass input synchronizer on TDO for minimum latency
     hw_set_bits(&pio->input_sync_bypass, 1u << tdo_pin);

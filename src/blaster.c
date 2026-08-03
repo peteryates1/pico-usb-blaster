@@ -54,6 +54,12 @@ static PIO jtag_pio;
 static uint jtag_sm;
 static uint jtag_offset;
 static bool jtag_pio_ok = false;
+// Diagnostic counters, read over SWD to find out which path the bitstream
+// actually takes. Not on any hot decision path.
+volatile uint32_t dbg_shift_pio_bytes = 0;
+volatile uint32_t dbg_shift_bb_bytes  = 0;
+volatile uint32_t dbg_bitbang_bytes   = 0;
+volatile uint32_t dbg_shift_cmds      = 0;
 
 // rx/tx byte to signal relations in bitbang mode
 //
@@ -232,7 +238,9 @@ int blaster_process(uint8_t rxBuf[], int rxCount, uint8_t txBuf[])
 
         if (shift_bytes_left > 0) // shift mode active
         {
-            uint8_t input = jtag_pio_ok ? shift_pio(b) : shift_bitbang(b);
+            uint8_t input;
+            if (jtag_pio_ok) { input = shift_pio(b); ++dbg_shift_pio_bytes; }
+            else             { input = shift_bitbang(b); ++dbg_shift_bb_bytes; }
 
             if (shift_read_set)
             {
@@ -247,6 +255,7 @@ int blaster_process(uint8_t rxBuf[], int rxCount, uint8_t txBuf[])
         }
         else if (SHIFT_MODE_FLAG(b)) // shift mode activated
         {
+            ++dbg_shift_cmds;
             shift_read_set = READ_FLAG(b);
             shift_bytes_left = PAYLOAD(b);
             gpio_put(TCK_DCLK_PIN, false);
@@ -256,6 +265,7 @@ int blaster_process(uint8_t rxBuf[], int rxCount, uint8_t txBuf[])
         }
         else // bitbang mode
         {
+            ++dbg_bitbang_bytes;
             output_enable(OE_FLAG(b));
             uint8_t input = bitbang(b);
 

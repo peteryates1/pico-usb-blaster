@@ -165,12 +165,45 @@ int main(int argc, char *argv[])
     fclose(f);
     printf("Bitstream: %ld bytes\n", rbf_len);
 
-    /* Open USB device */
-    libusb_init(NULL);
-    dev = libusb_open_device_with_vid_pid(NULL, VID, PID);
-    if (!dev) {
-        fprintf(stderr, "No USB-Blaster found\n");
+    /* Open USB device.
+     *
+     * libusb_open_device_with_vid_pid() takes the FIRST match, which silently
+     * targets the wrong board when more than one USB-Blaster is attached — a
+     * real Altera cable and this clone share 09fb:6001. Accept an optional
+     * bus:dev to disambiguate:
+     *
+     *   program_fpga foo.rbf $(jtag_probe_map --busdev ae115fb)
+     */
+    int want_bus = -1, want_addr = -1;
+    if (argc > 2 && sscanf(argv[2], "%d:%d", &want_bus, &want_addr) != 2) {
+        fprintf(stderr, "Bad bus:dev '%s'\n", argv[2]);
         return 1;
+    }
+    libusb_init(NULL);
+    {
+        libusb_device **list;
+        ssize_t n = libusb_get_device_list(NULL, &list);
+        int found = 0;
+        for (ssize_t i = 0; i < n && !dev; ++i) {
+            struct libusb_device_descriptor d;
+            if (libusb_get_device_descriptor(list[i], &d) != 0) continue;
+            if (d.idVendor != VID || d.idProduct != PID) continue;
+            int bus  = libusb_get_bus_number(list[i]);
+            int addr = libusb_get_device_address(list[i]);
+            ++found;
+            if (want_bus >= 0 && (bus != want_bus || addr != want_addr)) continue;
+            if (libusb_open(list[i], &dev) == 0)
+                printf("Opened USB-Blaster at %d:%d\n", bus, addr);
+        }
+        if (n >= 0) libusb_free_device_list(list, 1);
+        if (!dev) {
+            fprintf(stderr, "No USB-Blaster found (%d with %04x:%04x present)\n",
+                    found, VID, PID);
+            return 1;
+        }
+        if (found > 1 && want_bus < 0)
+            fprintf(stderr, "WARNING: %d USB-Blasters present and none selected;"
+                            " pass bus:dev to choose\n", found);
     }
     libusb_detach_kernel_driver(dev, 0);
     libusb_claim_interface(dev, 0);
