@@ -6,10 +6,16 @@
 ; Stalls on empty TX FIFO with TCK low (safe idle).
 ; TCK = sys_clk / (BLASTER_JTAG_CLKDIV * 4). At 120 MHz sys:
 ;   clkdiv 2 -> 15 MHz TCK, clkdiv 8 -> 3.75 MHz, clkdiv 16 -> 1.875 MHz.
-; 15 MHz proved too fast over flying leads to an EP4CE115 JTAG header: IDCODE
-; reads fine (a few hundred bits) but a 28-Mbit configuration stream ends with
-; CONF_DONE low, for both our bitstream and the vendor's own reference. Backed
-; off to 3.75 MHz, which still shifts 3.5 MB in about 8 s.
+; Set to 6 MHz, matching a genuine Altera USB-Blaster — which is also what
+; Quartus reports this cable as (jtagconfig --getparam JtagClock returns 6M and
+; is read-only, so the host cannot slow a clone down; only firmware can).
+;
+; CAUTION: this cable has never successfully CONFIGURED an FPGA. It reads IDCODE
+; reliably, but a 3.5 MB configuration stream ends with CONF_DONE low on the
+; A-E115FB. The original 15 MHz was suspected and ruled out — the failures were
+; actually against a ghost USB device, and after that was cleared the Terasic
+; cable worked first time while this one still did not. Suspect the flying leads
+; to the JTAG header. Use a real cable until this is diagnosed.
 
 .wrap_target
     out pins, 1     side 0 [1]  ; TDI output, TCK low  (2 cycles)
@@ -40,7 +46,7 @@ static inline void blaster_jtag_program_init(PIO pio, uint sm, uint offset,
 
     // See the header comment: TCK = sys_clk / (CLKDIV * 4).
 #ifndef BLASTER_JTAG_CLKDIV
-#define BLASTER_JTAG_CLKDIV 64.0f   /* 0.47 MHz TCK — deliberately slow, see below */
+#define BLASTER_JTAG_CLKDIV 5.0f    /* 6 MHz TCK — matches a genuine USB-Blaster */
 #endif
     sm_config_set_clkdiv(&c, BLASTER_JTAG_CLKDIV);
 
