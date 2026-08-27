@@ -4,3 +4,6 @@ _deps
 cmake-*
 build
 .DS_Store
+# host-side diagnostic binaries (build with the gcc line at the top of each .c)
+jtag_pintest
+jtag_wiggle

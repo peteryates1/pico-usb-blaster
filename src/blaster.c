@@ -5,23 +5,7 @@
 #include "hardware/pio.h"
 #include "blaster_jtag.pio.h"
 
-// Pin assignments — A-E115FB harness: GP16=TDI, GP17=TDO, GP18=TCK, GP19=TMS.
-// This matches pico-dirtyJtag's BOARD_PICO profile, so the same Pico can be
-// swapped between the two firmwares with no rewiring. Verified on hardware:
-// jtagconfig reads IDCODE 020F70DD (EP4CE115) through this mapping.
-//
-// The older GP2-5 mapping (commit caa836b) was for a different harness; the PIO
-// sets its sideset/out/in pins independently, so any mapping works — they do
-// not have to be adjacent.
-#define TCK_DCLK_PIN        18
-#define TMS_nCONFIG_PIN     19
-#define nCE_PIN             6   // unused for JTAG, keep out of the way
-#define nCS_PIN             7   // unused for JTAG, keep out of the way
-#define TDI_ASDI_PIN        16
-#define TDO_CONF_DONE_PIN   17
-#define DATAOUT_nSTATUS_PIN 8   // unused for JTAG, keep out of the way
-
-#define ACTIVE_LED_PIN PICO_DEFAULT_LED_PIN
+#include "board_config.h"   // pin map for the selected BOARD_TYPE
 
 // Pin masks for direct SIO register access
 #define TCK_MASK  (1u << TCK_DCLK_PIN)
@@ -79,6 +63,21 @@ volatile uint32_t dbg_shift_cmds      = 0;
 
 static void blaster_init(void)
 {
+#ifdef SHIFTER_DIR_PIN
+    /* Level-shifter direction, FIRST — before any JTAG pin becomes an output.
+     *
+     * On the pico-usb-debug-jtag carrier each of TCK/TMS/TDI passes through an
+     * SN74LVC1T45 whose DIR input is held low by a 10k pulldown at reset. DIR
+     * low means B->A, i.e. the shifter DRIVES its own A pin, which is the same
+     * net as the Pico's TCK/TMS/TDI pad. Setting those pads to output while
+     * DIR is still low is direct bus contention, so DIR goes high first and
+     * stays high for the lifetime of the firmware.
+     */
+    gpio_init(SHIFTER_DIR_PIN);
+    gpio_set_dir(SHIFTER_DIR_PIN, true);
+    gpio_put(SHIFTER_DIR_PIN, true);
+#endif
+
 #ifdef ACTIVE_LED_PIN
     gpio_init(ACTIVE_LED_PIN);
     gpio_set_dir(ACTIVE_LED_PIN, true);
@@ -92,6 +91,34 @@ static void blaster_init(void)
     gpio_init(TDI_ASDI_PIN);
     gpio_init(TDO_CONF_DONE_PIN);
     gpio_init(DATAOUT_nSTATUS_PIN);
+
+    /* The two INPUTS need pull-UPS to match a genuine USB-Blaster.
+     *
+     * gpio_init() leaves the pad at its RP2040 reset default, which is
+     * pull-DOWN enabled. A target's TDO is only driven while the TAP is in a
+     * Shift state; the rest of the time it is high-Z, so a pull-down makes it
+     * read 0 where a real Blaster reads 1. Captured side by side on the same
+     * jtagconfig scan, same command bytes:
+     *
+     *   genuine  31600303 03030303 ... 03030377 c33d08fc
+     *   clone    31600000 00000000 ... 00000074 03010afc
+     *                ^^ bit0 TDO, bit1 DATAOUT both stuck low
+     *
+     * Quartus samples TDO during the bit-bang TMS navigation as well as during
+     * shifts, so the floating-low reads corrupt chain detection and it reports
+     * "JTAG chain broken" even though shifted data comes back correctly (a
+     * pin-level IDCODE read returns 0x028040dd just fine).
+     */
+#ifdef TDO_DIAG_PULLDOWN
+    /* Diagnostic build only: invert the TDO pull to find out whether the pad is
+     * floating or actively driven. If the reading follows the internal pull,
+     * nothing is driving the pad (shifter unpowered, or the A-side wire open).
+     * If it stays put, something really is driving it. */
+    gpio_pull_down(TDO_CONF_DONE_PIN);
+#else
+    gpio_pull_up(TDO_CONF_DONE_PIN);
+#endif
+    gpio_pull_up(DATAOUT_nSTATUS_PIN);
 
     // Init PIO JTAG shift engine
     jtag_pio = pio0;
@@ -137,9 +164,18 @@ static inline void output_enable(bool enable)
     gpio_put(ACTIVE_LED_PIN, enable);
 #endif
 
+#ifdef SHIFTER_DIR_PIN
+    /* Level-shifted board: the shifters provide isolation, and their A side is
+     * driven whenever DIR is low — so tri-stating the Pico pads here would
+     * hand the net back to the shifter rather than releasing it. Keep the pads
+     * as outputs permanently; the Blaster OE bit only drives the activity LED.
+     */
+    gpio_set_dir_masked(OUT_PIN_MASK, 0xFFFFFFFF);
+#else
     // Set 5 output pins (TCK, TMS, nCE, nCS, TDI) as output or high-Z
     uint32_t dir = enable ? 0xFFFFFFFF : 0;
     gpio_set_dir_masked(OUT_PIN_MASK, dir);
+#endif
 }
 
 // Map protocol bitfield to GPIO pin positions atomically

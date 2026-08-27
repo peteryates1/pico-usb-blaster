@@ -10,12 +10,16 @@
 ; Quartus reports this cable as (jtagconfig --getparam JtagClock returns 6M and
 ; is read-only, so the host cannot slow a clone down; only firmware can).
 ;
-; CAUTION: this cable has never successfully CONFIGURED an FPGA. It reads IDCODE
-; reliably, but a 3.5 MB configuration stream ends with CONF_DONE low on the
-; A-E115FB. The original 15 MHz was suspected and ruled out — the failures were
-; actually against a ghost USB device, and after that was cleared the Terasic
-; cable worked first time while this one still did not. Suspect the flying leads
-; to the JTAG header. Use a real cable until this is diagnosed.
+; RESOLVED 2026-08-27: this cable now configures FPGAs successfully. A 4.88 MB
+; .sof was written to an EP4CGX150 in 43 s at 6 MHz, Quartus reporting
+; "Configuration succeeded". IDCODE reads are stable on both an EP4CGX150
+; (0x028040DD) and a QMTECH 10CL025 (0x020F30DD).
+;
+; The earlier failures were the flying leads, as suspected — specifically the
+; lack of level shifting. The fix is the pico-usb-debug-jtag carrier
+; (../../pico-usb-debug-jtag): an SN74LVC1T45 per signal referenced to the
+; target's own VTREF, with 33R source termination. 6 MHz survives even a
+; breadboarded version of that; the clock was never the problem.
 
 .wrap_target
     out pins, 1     side 0 [1]  ; TDI output, TCK low  (2 cycles)
@@ -48,6 +52,8 @@ static inline void blaster_jtag_program_init(PIO pio, uint sm, uint offset,
 #ifndef BLASTER_JTAG_CLKDIV
 #define BLASTER_JTAG_CLKDIV 5.0f    /* 6 MHz TCK — matches a genuine USB-Blaster */
 #endif
+/* Override from CMake: -DJTAG_CLKDIV=40 gives 750 kHz, for breadboard/flywire
+ * bring-up where 6 MHz will not survive the wiring. */
     sm_config_set_clkdiv(&c, BLASTER_JTAG_CLKDIV);
 
     // Bypass input synchronizer on TDO for minimum latency

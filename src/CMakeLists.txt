@@ -24,6 +24,32 @@ add_executable(pico_usb_blaster
 pico_generate_pio_header(pico_usb_blaster ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
 pico_generate_pio_header(pico_usb_blaster ${CMAKE_CURRENT_LIST_DIR}/blaster_jtag.pio)
 
+# Board / harness pin profile — see board_config.h.
+#   0 = flying leads, 1 = pico-usb-debug-jtag JTAG1, 2 = pico-usb-debug-jtag JTAG0
+if(DEFINED BOARD_TYPE)
+    target_compile_definitions(pico_usb_blaster PRIVATE BOARD_TYPE=${BOARD_TYPE})
+endif()
+
+# JTAG clock divider: TCK = sys_clk / (JTAG_CLKDIV * 4). 5 = 6 MHz, 40 = 750 kHz.
+if(DEFINED JTAG_CLKDIV)
+    target_compile_definitions(pico_usb_blaster PRIVATE BLASTER_JTAG_CLKDIV=${JTAG_CLKDIV})
+endif()
+
+# Diagnostic build: invert the TDO pull to tell a floating pad from a driven one
+if(TDO_DIAG_PULLDOWN)
+    target_compile_definitions(pico_usb_blaster PRIVATE TDO_DIAG_PULLDOWN)
+endif()
+
+# Print the active pin/clock config at configure time. These are cache
+# variables: re-running cmake WITHOUT -DTDO_DIAG_PULLDOWN does not clear a
+# previously set one, so a stale diagnostic build is easy to flash by accident.
+message(STATUS "blaster: BOARD_TYPE=${BOARD_TYPE} JTAG_CLKDIV=${JTAG_CLKDIV} "
+               "TDO_DIAG_PULLDOWN=${TDO_DIAG_PULLDOWN}")
+if(TDO_DIAG_PULLDOWN)
+    message(WARNING "blaster: DIAGNOSTIC build — TDO pull is INVERTED. "
+                    "Configure with -DTDO_DIAG_PULLDOWN=0 for a normal image.")
+endif()
+
 # Make sure TinyUSB can find tusb_config.h
 target_include_directories(pico_usb_blaster PUBLIC
     .
