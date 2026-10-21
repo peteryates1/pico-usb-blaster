@@ -92,7 +92,15 @@ extern "C" {
 #endif
 
 //------------- CLASS -------------//
+#include "board_config.h"
+
 #define CFG_TUD_VENDOR            1
+
+// The J1 UART's serial port, on the carrier only (cdc_uart.c)
+#define CFG_TUD_CDC               HAS_J1_UART
+#define CFG_TUD_CDC_EP_BUFSIZE    64
+#define CFG_TUD_CDC_RX_BUFSIZE    512
+#define CFG_TUD_CDC_TX_BUFSIZE    512
 
 #define CFG_TUD_VENDOR_EPSIZE     64
 

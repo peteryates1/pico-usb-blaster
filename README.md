@@ -109,6 +109,26 @@ Device Status:     0x0000
   (Bus Powered)
 ```
 
+### The carrier's J1 serial port
+
+Built for the pico-usb-debug-jtag carrier (`-DBOARD_TYPE=1` or `2`), the device
+also has a USB serial port for the carrier's J1 UART: a CDC-ACM function on
+interfaces 1 and 2, named `J1 UART`, driving `uart1` (GP4 TX, GP5 RX through
+the carrier's schmitt buffer). On Linux it is
+`/dev/serial/by-id/usb-Pico_USB_Blaster_<serial>-if01`. The Blaster stays
+interface 0 with the same endpoints, and the device descriptor does not change,
+so Quartus sees the same cable. The host sets the baud and frame format. LED1
+and LED2 show RX and TX traffic, and LED5 shows USB connected, as on the
+Raspberry Pi Debug Probe. The flying-leads build is unchanged, byte for byte.
+
+`test_cdc_uart.py` checks the port end to end through UART1's internal
+loopback, which it switches on over SWD (through the Debug Probe on the
+carrier's J3). Measured 2026-10-21:
+- Loss-free at 115200, 921600, 2 M and 2.5 Mbaud.
+- At 3 Mbaud, the UART's maximum on the 48 MHz peripheral clock, a continuous
+  stream loses data: the bridge moves about 210 KB/s.
+- To test the J1 pins themselves, jumper J1 TX to J1 RX and pass `--external`.
+
 ### Usage
 Now you can program Intel/Altera JTAG/AS/PS devices with Quartus or use it as a generic JTAG-adapter (where USB-Blaster is supported)
 

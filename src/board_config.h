@@ -78,4 +78,22 @@
     ((1u << 0) | (1u << 1) | (1u << 2) | (1u << 4) | (1u << 5) | (1u << 6) | \
      (1u << 7) | (1u << 8) | (1u << 12) | (1u << 13) | (1u << 14) | \
      (1u << 15) | (1u << 16))
+
+/* The pico-debug side's J1 UART, bridged to a USB serial port (cdc_uart.c).
+ * J1 RX reaches GP5 through U2A's schmitt buffer and GP6 directly through
+ * 100R. GP6 stays an input with its pull-up: the pad's reset pull-down would
+ * hold an unconnected J1 RX low, which the UART reads as a continuous break. */
+#define J1_UART             uart1
+#define J1_UART_IRQ         UART1_IRQ
+#define J1_UART_TX_PIN      4   /* J1.1 via R1 */
+#define J1_UART_RX_PIN      5   /* J1.3 via U2A */
+#define J1_UART_RX_TAP_PIN  6   /* J1.3 via R2, unbuffered */
+#define PD_UART_RX_LED_PIN  7   /* LED1: bytes from the target */
+#define PD_UART_TX_LED_PIN  8   /* LED2: bytes to the target */
+#define PD_USB_LED_PIN      2   /* LED5: USB connected */
+#define HAS_J1_UART         1
+#endif
+
+#ifndef HAS_J1_UART
+#define HAS_J1_UART         0
 #endif

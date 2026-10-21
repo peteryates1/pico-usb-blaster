@@ -18,6 +18,7 @@ add_executable(pico_usb_blaster
     main.c
     usb_descriptors.c
     blaster.c
+    cdc_uart.c
     ws2812.c
 )
 
@@ -68,6 +69,8 @@ target_link_libraries(pico_usb_blaster PUBLIC
     tinyusb_board
     pico_platform
     hardware_pio
+    hardware_uart
+    hardware_irq
 )
 
 pico_set_binary_type(pico_usb_blaster copy_to_ram)

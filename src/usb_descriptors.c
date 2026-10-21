@@ -26,6 +26,8 @@
 #include "bsp/board_api.h"
 #include "tusb.h"
 
+#include "board_config.h"
+
 //--------------------------------------------------------------------+
 // Device Descriptors
 //--------------------------------------------------------------------+
@@ -35,6 +37,9 @@ tusb_desc_device_t const desc_device =
     .bDescriptorType = TUSB_DESC_DEVICE,
     .bcdUSB = 0x0110, // 1.10
 
+    /* Left unspecified with the J1 serial port too, so the device descriptor
+     * Quartus sees does not change. Linux binds cdc_acm by interface class;
+     * Windows would want MISC/COMMON/IAD here to group the CDC pair. */
     .bDeviceClass = TUSB_CLASS_UNSPECIFIED,
     .bDeviceSubClass = 0,
     .bDeviceProtocol = 0,
@@ -61,16 +66,39 @@ uint8_t const *tud_descriptor_device_cb(void)
 //--------------------------------------------------------------------+
 // Configuration Descriptor
 //--------------------------------------------------------------------+
+/* The Blaster stays interface 0 with the same two endpoints; the J1 serial
+ * port, where there is one, follows it as interfaces 1 and 2. */
 enum
 {
     ITF_NUM_VENDOR,
+#if HAS_J1_UART
+    ITF_NUM_CDC,
+    ITF_NUM_CDC_DATA,
+#endif
     ITF_NUM_TOTAL
 };
 
+#if HAS_J1_UART
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_VENDOR_DESC_LEN + TUD_CDC_DESC_LEN)
+#else
 #define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_VENDOR_DESC_LEN)
+#endif
 
 #define EPNUM_VENDOR_IN 1
 #define EPNUM_VENDOR_OUT 2
+#define EPNUM_CDC_NOTIF 0x83
+#define EPNUM_CDC_OUT   0x04
+#define EPNUM_CDC_IN    0x84
+
+// String Descriptor Index
+enum
+{
+    STRID_LANGID = 0,
+    STRID_MANUFACTURER,
+    STRID_PRODUCT,
+    STRID_SERIAL,
+    STRID_J1_UART,
+};
 
 // default vendor descriptor macro class subclass product is 255,0,0 when lsusb dump is 255,255,255
 // and EP order is different dunno if it is relevant
@@ -86,7 +114,12 @@ uint8_t const desc_configuration[] =
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x80, 150),
 
     // Interface number, string index, EP Out & IN address, EP size
-    TUD_BLASTER_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, 0, EPNUM_VENDOR_OUT, 0x80 | EPNUM_VENDOR_IN, CFG_TUD_VENDOR_EPSIZE)
+    TUD_BLASTER_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, 0, EPNUM_VENDOR_OUT, 0x80 | EPNUM_VENDOR_IN, CFG_TUD_VENDOR_EPSIZE),
+
+#if HAS_J1_UART
+    // Interface number, string index, EP notification address and size, EP data address (out, in) and size
+    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_J1_UART, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, CFG_TUD_CDC_EP_BUFSIZE),
+#endif
 };
 
 // Invoked when received GET CONFIGURATION DESCRIPTOR
@@ -102,15 +135,6 @@ uint8_t const *tud_descriptor_configuration_cb(uint8_t index)
 // String Descriptors
 //--------------------------------------------------------------------+
 
-// String Descriptor Index
-enum
-{
-    STRID_LANGID = 0,
-    STRID_MANUFACTURER,
-    STRID_PRODUCT,
-    STRID_SERIAL,
-};
-
 // array of pointer to string descriptors
 char const *string_desc_arr[] =
 {
@@ -118,6 +142,9 @@ char const *string_desc_arr[] =
     "Pico",                     // 1: Manufacturer
     "USB Blaster",              // 2: Product
     NULL,                       // 3: Serial
+#if HAS_J1_UART
+    "J1 UART",                  // 4: the pico-debug side's serial port
+#endif
 };
 
 static uint16_t _desc_str[32 + 1];
