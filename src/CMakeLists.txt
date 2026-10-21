@@ -30,6 +30,12 @@ if(DEFINED BOARD_TYPE)
     target_compile_definitions(pico_usb_blaster PRIVATE BOARD_TYPE=${BOARD_TYPE})
 endif()
 
+# On the carrier (1, 2, and the default, which is 1) GP0/GP1 are J4, a
+# pico-debug UART, so no stdio UART console there (blaster.c checks this)
+if(NOT DEFINED BOARD_TYPE OR BOARD_TYPE EQUAL 1 OR BOARD_TYPE EQUAL 2)
+    pico_enable_stdio_uart(pico_usb_blaster 0)
+endif()
+
 # JTAG clock divider: TCK = sys_clk / (JTAG_CLKDIV * 4). 5 = 6 MHz, 40 = 750 kHz.
 if(DEFINED JTAG_CLKDIV)
     target_compile_definitions(pico_usb_blaster PRIVATE BLASTER_JTAG_CLKDIV=${JTAG_CLKDIV})

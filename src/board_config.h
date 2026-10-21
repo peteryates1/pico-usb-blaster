@@ -45,11 +45,11 @@
 #define TDI_ASDI_PIN        21  /* U7  */
 #define TDO_CONF_DONE_PIN   26  /* U9, input only */
 #define SHIFTER_DIR_PIN     3   /* U7/U8/U10 DIR, 10k pulldown R14 */
-#define nCE_PIN             7   /* not wired to the header; drives LED1 */
-#define nCS_PIN             8   /* not wired to the header; drives LED2 */
+/* nCE_PIN / nCS_PIN (AS mode) are not wired, so they stay undefined: the
+ * GPIOs they used to drive, GP7/GP8, are the pico-debug side's UART LEDs. */
 #define DATAOUT_nSTATUS_PIN 9   /* not wired; GP9 is the board's only free pin,
                                  * so its pull-up reads 1 like a real cable */
-#define ACTIVE_LED_PIN      10  /* LED7 */
+#define ACTIVE_LED_PIN      28  /* LED6, JTAG1's LED */
 
 #elif BOARD_TYPE == BOARD_DEBUG_JTAG0
 /* ../pico-usb-debug-jtag carrier board, JTAG0 channel (headers J5 / J6). */
@@ -58,11 +58,24 @@
 #define TDI_ASDI_PIN        17  /* U3 */
 #define TDO_CONF_DONE_PIN   19  /* U5, input only */
 #define SHIFTER_DIR_PIN     11  /* U3/U4/U6 DIR, 10k pulldown R15 */
-#define nCE_PIN             7   /* not wired to the header; drives LED1 */
-#define nCS_PIN             8   /* not wired to the header; drives LED2 */
+/* nCE_PIN / nCS_PIN: not wired — see the JTAG1 profile */
 #define DATAOUT_nSTATUS_PIN 9   /* free pin — see above */
-#define ACTIVE_LED_PIN      10  /* LED7 */
+#define ACTIVE_LED_PIN      10  /* LED7, JTAG0's LED */
 
 #else
 #error "unknown BOARD_TYPE"
+#endif
+
+#if BOARD_TYPE == BOARD_DEBUG_JTAG1 || BOARD_TYPE == BOARD_DEBUG_JTAG0
+/* Pins the carrier's pico-debug side owns. They follow the Raspberry Pi Debug
+ * Probe's pin map: UART on J1 (GP4 TX, GP5 RX via schmitt, GP6 raw tap), SWD
+ * on J2 (GP12 SWCLK, GP13 SWDI via schmitt, GP14 SWDIO), UART C on J4
+ * (GP0/GP1), and the probe's five LEDs from pico-sdk boards/debug_probe.h:
+ * GP2 LED5 USB connected, GP7 LED1 UART RX, GP8 LED2 UART TX, GP15 LED3 DAP
+ * connected, GP16 LED4 DAP running. blaster.c refuses to build if the JTAG
+ * side touches any of them. */
+#define CARRIER_PICO_DEBUG_PINS \
+    ((1u << 0) | (1u << 1) | (1u << 2) | (1u << 4) | (1u << 5) | (1u << 6) | \
+     (1u << 7) | (1u << 8) | (1u << 12) | (1u << 13) | (1u << 14) | \
+     (1u << 15) | (1u << 16))
 #endif

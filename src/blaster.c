@@ -12,9 +12,36 @@
 #define TDI_MASK  (1u << TDI_ASDI_PIN)
 #define TDO_MASK  (1u << TDO_CONF_DONE_PIN)
 
+// nCE/nCS are AS-mode outputs; a board that does not wire them leaves the
+// pin undefined and the protocol bits are dropped
+#ifdef nCE_PIN
+#define nCE_MASK  (1u << nCE_PIN)
+#else
+#define nCE_MASK  0u
+#endif
+#ifdef nCS_PIN
+#define nCS_MASK  (1u << nCS_PIN)
+#else
+#define nCS_MASK  0u
+#endif
+
 // Output pin mask (TCK, TMS, nCE, nCS, TDI)
 #define OUT_PIN_MASK ((1u << TCK_DCLK_PIN) | (1u << TMS_nCONFIG_PIN) | \
-                      (1u << nCE_PIN) | (1u << nCS_PIN) | (1u << TDI_ASDI_PIN))
+                      nCE_MASK | nCS_MASK | (1u << TDI_ASDI_PIN))
+
+#ifdef CARRIER_PICO_DEBUG_PINS
+// Every pin blaster_init() configures, inputs included (they get pulls)
+#define BLASTER_PIN_MASK (OUT_PIN_MASK | TDO_MASK | (1u << DATAOUT_nSTATUS_PIN) | \
+                          (1u << SHIFTER_DIR_PIN) | (1u << ACTIVE_LED_PIN))
+_Static_assert((BLASTER_PIN_MASK & CARRIER_PICO_DEBUG_PINS) == 0,
+               "the JTAG firmware touches a pin the carrier's pico-debug side owns");
+#ifdef LIB_PICO_STDIO_UART
+// TinyUSB's board_init() starts the stdio UART console on these pins
+_Static_assert((((1u << PICO_DEFAULT_UART_TX_PIN) | (1u << PICO_DEFAULT_UART_RX_PIN)) &
+                CARRIER_PICO_DEBUG_PINS) == 0,
+               "the stdio UART console is on the carrier's pico-debug pins (J4)");
+#endif
+#endif
 
 #ifdef ACTIVE_LED_WS2812_PIN
     #include "ws2812.h"
@@ -86,8 +113,12 @@ static void blaster_init(void)
     // Init all 7 pins as GPIO inputs
     gpio_init(TCK_DCLK_PIN);
     gpio_init(TMS_nCONFIG_PIN);
+#ifdef nCE_PIN
     gpio_init(nCE_PIN);
+#endif
+#ifdef nCS_PIN
     gpio_init(nCS_PIN);
+#endif
     gpio_init(TDI_ASDI_PIN);
     gpio_init(TDO_CONF_DONE_PIN);
     gpio_init(DATAOUT_nSTATUS_PIN);
@@ -184,8 +215,8 @@ static inline uint32_t protocol_to_gpio(uint8_t data)
     uint32_t gpio_val = 0;
     if (data & 0x01) gpio_val |= (1u << TCK_DCLK_PIN);        // bit 0 -> TCK
     if (data & 0x02) gpio_val |= (1u << TMS_nCONFIG_PIN);     // bit 1 -> TMS
-    if (data & 0x04) gpio_val |= (1u << nCE_PIN);             // bit 2 -> nCE
-    if (data & 0x08) gpio_val |= (1u << nCS_PIN);             // bit 3 -> nCS
+    if (data & 0x04) gpio_val |= nCE_MASK;                    // bit 2 -> nCE
+    if (data & 0x08) gpio_val |= nCS_MASK;                    // bit 3 -> nCS
     if (data & 0x10) gpio_val |= (1u << TDI_ASDI_PIN);        // bit 4 -> TDI
     return gpio_val;
 }
@@ -261,7 +292,7 @@ void blaster_reset(void)
     shift_bytes_left = 0;
     output_enable(false);
     // Default nCS=1 so shift mode reads TDO (JTAG) not DATAOUT (AS)
-    gpio_put_masked(OUT_PIN_MASK, 1u << nCS_PIN);
+    gpio_put_masked(OUT_PIN_MASK, nCS_MASK);
 }
 
 int blaster_process(uint8_t rxBuf[], int rxCount, uint8_t txBuf[])
