@@ -35,6 +35,21 @@ endif()
 # pico-debug UART, so no stdio UART console there (blaster.c checks this)
 if(NOT DEFINED BOARD_TYPE OR BOARD_TYPE EQUAL 1 OR BOARD_TYPE EQUAL 2)
     pico_enable_stdio_uart(pico_usb_blaster 0)
+
+    # The carrier's J2 debug probe (dap_swd.c, HAS_J2_SWD in board_config.h):
+    # ARM's CMSIS-DAP command handling and debugprobe's PIO SWD layer, both
+    # from raspberrypi/debugprobe debugprobe-v2.3.1 -- see cmsis_dap/README.md
+    target_sources(pico_usb_blaster PRIVATE
+        dap_swd.c
+        probe.c
+        sw_dp_pio.c
+        cmsis_dap/DAP.c
+        cmsis_dap/DAP_vendor.c
+    )
+    target_include_directories(pico_usb_blaster PRIVATE cmsis_dap)
+    pico_generate_pio_header(pico_usb_blaster ${CMAKE_CURRENT_LIST_DIR}/probe.pio)
+    # cmsis_compiler.h only: cmsis_core itself would add the SDK's system_RP2040.c
+    target_link_libraries(pico_usb_blaster PRIVATE cmsis_core_headers)
 endif()
 
 # JTAG clock divider: TCK = sys_clk / (JTAG_CLKDIV * 4). 5 = 6 MHz, 40 = 750 kHz.

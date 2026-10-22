@@ -67,7 +67,8 @@ uint8_t const *tud_descriptor_device_cb(void)
 // Configuration Descriptor
 //--------------------------------------------------------------------+
 /* The Blaster stays interface 0 with the same two endpoints; the J1 serial
- * port, where there is one, follows it as interfaces 1 and 2. */
+ * port, where there is one, follows it as interfaces 1 and 2, and the J2
+ * debug probe as interface 3. */
 enum
 {
     ITF_NUM_VENDOR,
@@ -75,20 +76,23 @@ enum
     ITF_NUM_CDC,
     ITF_NUM_CDC_DATA,
 #endif
+#if HAS_J2_SWD
+    ITF_NUM_DAP,
+#endif
     ITF_NUM_TOTAL
 };
 
-#if HAS_J1_UART
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_VENDOR_DESC_LEN + TUD_CDC_DESC_LEN)
-#else
-#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_VENDOR_DESC_LEN)
-#endif
+#define CONFIG_TOTAL_LEN (TUD_CONFIG_DESC_LEN + TUD_VENDOR_DESC_LEN \
+                          + (HAS_J1_UART ? TUD_CDC_DESC_LEN : 0)   \
+                          + (HAS_J2_SWD ? TUD_VENDOR_DESC_LEN : 0))
 
 #define EPNUM_VENDOR_IN 1
 #define EPNUM_VENDOR_OUT 2
 #define EPNUM_CDC_NOTIF 0x83
 #define EPNUM_CDC_OUT   0x04
 #define EPNUM_CDC_IN    0x84
+#define EPNUM_DAP_OUT   0x05
+#define EPNUM_DAP_IN    0x85
 
 // String Descriptor Index
 enum
@@ -98,6 +102,7 @@ enum
     STRID_PRODUCT,
     STRID_SERIAL,
     STRID_J1_UART,
+    STRID_J2_DAP,
 };
 
 // default vendor descriptor macro class subclass product is 255,0,0 when lsusb dump is 255,255,255
@@ -119,6 +124,12 @@ uint8_t const desc_configuration[] =
 #if HAS_J1_UART
     // Interface number, string index, EP notification address and size, EP data address (out, in) and size
     TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, STRID_J1_UART, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, CFG_TUD_CDC_EP_BUFSIZE),
+#endif
+
+#if HAS_J2_SWD
+    // CMSIS-DAP v2: class ff/00/00, bulk OUT then bulk IN, and "CMSIS-DAP" in
+    // the interface string -- what OpenOCD's cmsis-dap driver looks for
+    TUD_VENDOR_DESCRIPTOR(ITF_NUM_DAP, STRID_J2_DAP, EPNUM_DAP_OUT, EPNUM_DAP_IN, CFG_TUD_VENDOR_EPSIZE),
 #endif
 };
 
@@ -143,7 +154,10 @@ char const *string_desc_arr[] =
     "USB Blaster",              // 2: Product
     NULL,                       // 3: Serial
 #if HAS_J1_UART
-    "J1 UART",                  // 4: the pico-debug side's serial port
+    [STRID_J1_UART] = "J1 UART",     // 4: the pico-debug side's serial port
+#endif
+#if HAS_J2_SWD
+    [STRID_J2_DAP] = "J2 CMSIS-DAP", // 5: and its debug probe
 #endif
 };
 

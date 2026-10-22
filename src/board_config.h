@@ -92,8 +92,22 @@
 #define PD_UART_TX_LED_PIN  8   /* LED2: bytes to the target */
 #define PD_USB_LED_PIN      2   /* LED5: USB connected */
 #define HAS_J1_UART         1
+
+/* The pico-debug side's J2 SWD port, a CMSIS-DAP v2 probe (dap_swd.c). The
+ * Debug Probe's wiring: GP12 drives SWCLK through R4 and GP14 drives SWDIO
+ * through R5, both 100R, and GP13 reads the connector side of SWDIO back
+ * through U2B's schmitt buffer. */
+#define J2_SWCLK_PIN        12  /* J2.1 via R4 */
+#define J2_SWDI_PIN         13  /* J2.3 via R6/U2B, input only */
+#define J2_SWDIO_PIN        14  /* J2.3 via R5 */
+#define PD_DAP_CONNECTED_LED_PIN 15  /* LED3: a debugger has connected */
+#define PD_DAP_RUNNING_LED_PIN   16  /* LED4: the debugger has the target running */
+#define HAS_J2_SWD          1
 #endif
 
 #ifndef HAS_J1_UART
 #define HAS_J1_UART         0
+#endif
+#ifndef HAS_J2_SWD
+#define HAS_J2_SWD          0
 #endif

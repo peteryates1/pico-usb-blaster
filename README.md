@@ -129,6 +129,42 @@ carrier's J3). Measured 2026-10-21:
   stream loses data: the bridge moves about 210 KB/s.
 - To test the J1 pins themselves, jumper J1 TX to J1 RX and pass `--external`.
 
+### The carrier's J2 debug probe
+
+Built for the carrier, the device is also a CMSIS-DAP v2 debug probe on J2,
+which is the Raspberry Pi Debug Probe's SWD port: interface 3, named
+`J2 CMSIS-DAP`, on bulk endpoints 0x05 and 0x85. SWCLK is GP12 and SWDIO GP14,
+read back on GP13 through the carrier's schmitt buffer. LED3 lights while a
+debugger is connected, and LED4 while it has the target running. The command
+handling and the PIO SWD layer are the Debug Probe's own, from
+raspberrypi/debugprobe v2.3.1 (`src/cmsis_dap/README.md` lists what came from
+where and what changed). SWD runs on pio1, beside the Blaster's pio0. The
+flying-leads build is unchanged apart from its build date.
+
+Name it by the device's serial:
+
+```bash
+openocd -f interface/cmsis-dap.cfg -c "adapter serial e66440a2" \
+        -f target/rp2040.cfg -c "adapter speed 5000"
+```
+
+With more than one CMSIS-DAP probe attached, always name one. Without
+`adapter serial`, OpenOCD takes the first it finds, and if that is this one, a
+`program ... reset` meant for another probe's target reflashes the Pico on J2.
+
+`test_swd_dap.py` checks it against an RP2040 on J2: the interface's shape, the
+chip ID, bootrom block reads, a register round trip, halt and resume, and a
+64 KB flash read. Measured 2026-10-22:
+- Every check passes. Flash reads run at 66 KB/s at 1 MHz SWCLK and 229 KB/s
+  at 5 MHz.
+- Quartus is unaffected while the probe is idle: the carrier's ten-cycle run
+  gave 30/30 single-try chain scans and 10/10 configurations at 74-76 s, as
+  before.
+- Both at once work, but share the Pico. With J2 reading the target's flash
+  nonstop at 5 MHz (82 MB in 391 s, every 16 KB read identical to the first),
+  three scan-configure-DoAll cycles all passed, and each configuration took
+  90-91 s instead of 74-76 s.
+
 ### Usage
 Now you can program Intel/Altera JTAG/AS/PS devices with Quartus or use it as a generic JTAG-adapter (where USB-Blaster is supported)
 

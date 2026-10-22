@@ -36,6 +36,7 @@
 #include "ft245_eeprom.h"
 #include "blaster.h"
 #include "cdc_uart.h"
+#include "dap_swd.h"
 
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
@@ -77,6 +78,9 @@ int main(void)
     gpio_init(PD_USB_LED_PIN);
     gpio_set_dir(PD_USB_LED_PIN, GPIO_OUT);
 #endif
+#if HAS_J2_SWD
+    dap_swd_init();
+#endif
 
     // init device stack on configured roothub port
     tud_init(BOARD_TUD_RHPORT);
@@ -93,6 +97,9 @@ int main(void)
 #if HAS_J1_UART
         cdc_uart_task();
         gpio_put(PD_USB_LED_PIN, tud_ready());  // LED5: mounted and not suspended
+#endif
+#if HAS_J2_SWD
+        dap_swd_task();
 #endif
         led_blinking_task();
     }
