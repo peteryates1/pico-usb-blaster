@@ -12,36 +12,103 @@ The project relies only on **tinyUSB** stack, so it also should be also easily p
 * if non-3.3V operation required - adequate fast level shifter capable of [loading 1k TCK pulldown](https://www.intel.com/content/www/us/en/docs/programmable/683546/current/pull-up-and-pull-down-of-jtag-pins-during.html)
 * i tested TXS0108E i had, and while it works, i can't recommend it (if 1k pulldown is present), because TCK quickly drops to ~2v instead of steady 3.3v
 
+### Building
+This fork is built with the [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk)
+2.2.0; point `PICO_SDK_PATH` at your copy. The pin map is one of the profiles
+in [src/board_config.h](./src/board_config.h), chosen with `-DBOARD_TYPE` when
+you configure ([Pinout](#pinout) has the pins):
+
+| `BOARD_TYPE` | Profile | For | Also on the USB device |
+|--------------|---------|-----|------------------------|
+| `0` | `BOARD_FLYING_LEADS` | a bare Pico on jumper wires | - |
+| `1` | `BOARD_DEBUG_JTAG1` | the [pico-usb-debug-jtag](https://github.com/peteryates1/pico-usb-debug-jtag) carrier's JTAG1 channel (J7/J8) | the [J1 serial port](#the-carriers-j1-serial-port) and the [J2 debug probe](#the-carriers-j2-debug-probe) |
+| `2` (default) | `BOARD_DEBUG_JTAG0` | the carrier's JTAG0 channel (J5/J6) | the same |
+
+Use one build directory per variant:
+
+```bash
+export PICO_SDK_PATH=/path/to/pico-sdk
+cd src
+
+# the carrier's JTAG0
+cmake -S . -B build-jtag0 -DPICO_BOARD=pico -DBOARD_TYPE=2
+make -C build-jtag0 -j$(nproc)
+
+# the carrier's JTAG1
+cmake -S . -B build-jtag1 -DPICO_BOARD=pico -DBOARD_TYPE=1
+make -C build-jtag1 -j$(nproc)
+
+# flying leads
+cmake -S . -B build-flying -DPICO_BOARD=pico -DBOARD_TYPE=0
+make -C build-flying -j$(nproc)
+```
+
+Each directory then holds `pico_usb_blaster.uf2`, for BOOTSEL, and
+`pico_usb_blaster.elf`, for an SWD probe. After the first `cmake`,
+`make -C <dir>` alone rebuilds.
+
+- `BOARD_TYPE` and the two options below are CMake cache variables. Running
+  `cmake` on an existing directory without them keeps their old values, so
+  give each variant its own directory. The configure step prints them:
+  `-- blaster: BOARD_TYPE=2 JTAG_CLKDIV= TDO_DIAG_PULLDOWN=`.
+- `-DJTAG_CLKDIV=n` sets TCK to 120 MHz / (4 × n). The default, 5, gives
+  6 MHz, a genuine USB-Blaster's rate; 40 gives 750 kHz.
+- `-DTDO_DIAG_PULLDOWN=1` is a diagnostic build that inverts TDO's pull, to
+  tell a floating TDO from a driven one. `cmake` warns while it is set.
+- `make` does not remake a deleted `.uf2`: the SDK writes it only when it
+  links the `.elf`. Delete the `.elf` too and `make` writes both again.
+- Tested on hardware with an RP2040 Pico. `-DPICO_BOARD=pico2` (RP2350) also
+  builds, but no Pico 2 has run it.
+- `check_variants.sh`, run from the repository root with `PICO_SDK_PATH` set,
+  builds every profile from a fresh configure and checks that the default is
+  JTAG0's image.
+
 ### Flashing
-* Get latest release uf2 or build your own:
+- **BOOTSEL**: hold BOOTSEL while you plug in the Pico's USB (on the carrier:
+  hold BOOTSEL, press and release SW4, then release BOOTSEL). Copy the `.uf2`
+  to the drive that appears, or run
+  `picotool load -v -x build-jtag0/pico_usb_blaster.uf2`.
+- **SWD**, from a CMSIS-DAP probe on the Pico's SWD pins. The carrier brings
+  them out on J3 with SWCLK and SWDIO swapped, so J3 needs a crossed cable.
+  Name the probe by its serial, because the carrier's J2 is a CMSIS-DAP probe
+  too:
+
+  ```bash
+  openocd -f interface/cmsis-dap.cfg -c "adapter serial <probe serial>" \
+          -c "set USE_CORE 0" -f target/rp2040.cfg -c "adapter speed 1000" \
+          -c "program build-jtag0/pico_usb_blaster.elf verify reset exit"
   ```
-  /src$       mkdir build
-  /src$       cd build
-  /src/build$ cmake ..
-  /src/build$ make pico_usb_blaster
-  ```
-* Press BOOTSEL, connect USB and drop uf2 there
+
+  A `program` that fails partway leaves the Pico halted with its flash half
+  written: retry, or recover it with BOOTSEL.
 
 ### Pinout
-Default TCK/DCLK pin is GP11 ([blaster.c](./src/blaster.c))
-```
-#define TCK_DCLK_PIN        11
-```
+The PIO engine drives each pin on its own, so a profile can put the signals on
+any GPIOs. The profiles in [src/board_config.h](./src/board_config.h):
 
-Other data pins for simplicity are mapped sequentially relative to TCK/DCLK
-```
-GPIO  | I/O | name            | JTAG | AS        | PS
-------+-----+-----------------+------+-----------+-----------
-11    | O   | TCK_DCLK        | TCK  | DCLK      | DCLK
-12    | O   | TMS_nCONFIG     | TMS  | nCONFIG   | nCONFIG
-13    | O   | nCE             | -    | nCE       | -
-14    | O   | nCS             | -    | nCS       | -
-15    | O   | TDI_ASDI        | TDI  | ASDI      | DATA0 
-16    | I   | TDO_CONF_DONE   | TDO  | CONF_DONE | CONF_DONE
-17    | I   | DATAOUT_nSTATUS | -    | DATAOUT   | nSTATUS
-```
+| Signal | JTAG | AS | PS | Flying leads (`0`) | Carrier JTAG1 (`1`) | Carrier JTAG0 (`2`) |
+|--------|------|----|----|--------------------|---------------------|---------------------|
+| TCK_DCLK | TCK | DCLK | DCLK | GP18 | GP27 | GP20 |
+| TMS_nCONFIG | TMS | nCONFIG | nCONFIG | GP19 | GP22 | GP18 |
+| TDI_ASDI | TDI | ASDI | DATA0 | GP16 | GP21 | GP17 |
+| TDO_CONF_DONE (in) | TDO | CONF_DONE | CONF_DONE | GP17 | GP26 | GP19 |
+| nCE | - | nCE | - | GP6 | not wired | not wired |
+| nCS | - | nCS | - | GP7 | not wired | not wired |
+| DATAOUT_nSTATUS (in) | - | DATAOUT | nSTATUS | GP8 | GP9, not wired | GP9, not wired |
+| level shifters' DIR | | | | - | GP3 | GP11 |
+| activity LED | | | | GP25 | GP28 (LED6) | GP10 (LED7) |
 
-GP0 is debug UART TX, GP25 (onbooard LED) is used as an output enable / activity LED
+- Flying leads: the JTAG pins match pico-dirtyJtag's `BOARD_PICO`, so one Pico
+  can switch between the two firmwares without rewiring. GP0 and GP1 are the
+  debug UART's TX and RX.
+- The carrier is JTAG only: AS and PS are not wired. GP9 is its only free pin,
+  and its pull-up reads 1, as on a real cable. The firmware drives DIR high
+  before any JTAG pin becomes an output. There is no debug UART: GP0 and GP1
+  are the carrier's J4, and `board_config.h` lists the other pins its
+  pico-debug side owns.
+
+Upstream's pin map (TCK on GP11, the other signals on GP12-17) is not one of
+these profiles.
 
 ### Drivers
 Follow the 'Installing the Intel FPGA Download Cable Driver' instruction from Intel website
