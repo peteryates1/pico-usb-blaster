@@ -13,8 +13,11 @@
 #define BOARD_DEBUG_JTAG1    1  /* pico-usb-debug-jtag carrier, JTAG1 channel */
 #define BOARD_DEBUG_JTAG0    2  /* pico-usb-debug-jtag carrier, JTAG0 channel */
 
+/* JTAG0: on our carrier JTAG1 has a hardware fault (pico-usb-debug-jtag
+ * README, 2026-10-22), so a plain build must not land on it.
+ * Test: check_variants.sh */
 #ifndef BOARD_TYPE
-#define BOARD_TYPE BOARD_DEBUG_JTAG1
+#define BOARD_TYPE BOARD_DEBUG_JTAG0
 #endif
 
 
